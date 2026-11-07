@@ -7,7 +7,7 @@
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #111317; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; display: flex; height: 100vh; overflow: hidden; }
-  #sidebar { width: 450px; background: #181a21; border-right: 1px solid #2b2e3b; padding: 18px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+  #sidebar { width: 440px; background: #181a21; border-right: 1px solid #2b2e3b; padding: 18px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
   #player-container { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #0a0b0e; padding: 20px; }
   h2 { color: #f0c040; font-size: 18px; margin-bottom: 2px; }
   .section { background: #20232c; border-radius: 8px; padding: 12px; border: 1px solid #2f3342; }
@@ -24,7 +24,6 @@
   button.danger { background: #6b2222; border-color: #9c3232; }
   button.danger:hover { background: #852b2b; }
   .notice { background: #2b2210; border: 1px solid #c7951a; color: #f5d061; font-size: 11px; padding: 8px; border-radius: 6px; line-height: 1.4; margin-bottom: 8px; }
-  .fps-badge { font-size: 11px; color: #40e080; font-weight: bold; margin-top: -4px; margin-bottom: 8px; display: none; }
   .readout { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; text-align: center; }
   .readout-box { background: #14161d; padding: 8px; border-radius: 6px; border: 1px solid #2f3342; }
   .readout-val { font-size: 18px; font-weight: bold; color: #f0c040; }
@@ -37,7 +36,8 @@
   .controls-row button { width: auto; padding: 6px 14px; }
   #marker-list { max-height: 160px; overflow-y: auto; font-size: 12px; }
   .marker-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; background: #161820; border-radius: 4px; margin-bottom: 4px; border-left: 4px solid #fff; }
-  .color-preview-box { height: 28px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px; text-shadow: 0 1px 2px #000; margin-bottom: 8px; border: 1px solid #373b4d; transition: background-color 0.1s; }
+  .color-preview-box { height: 28px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px; text-shadow: 0 1px 2px #000; margin-bottom: 8px; border: 1px solid #373b4d; }
+  .badge { background: #2f3342; padding: 2px 6px; border-radius: 4px; font-size: 11px; color: #8ef; margin-left: 6px; }
 </style>
 </head>
 <body>
@@ -48,36 +48,27 @@
   <div class="section">
     <h3>1. Video Source</h3>
     <div id="protocol-warning" class="notice" style="display:none;">
-      <b>YouTube Error 153 Fix:</b> If opening via <code>file:///</code>, YouTube blocks embeds. Run a local server (e.g. <code>python -m http.server</code>) or select a local video below for instant frame detection without buffering.
+      <b>Note on YouTube Error 153:</b> To avoid embed blocking, run via localhost (e.g. <code>python -m http.server</code>) or use a local video file below.
     </div>
-    <input type="text" id="yt-url" placeholder="Paste YouTube link, /shorts/, or ID..." />
+    <input type="text" id="yt-url" placeholder="Paste YouTube link, /shorts/, or Video ID..." />
     <button onclick="loadYouTube()">Load YouTube Video</button>
-    <label>Or select local video (Auto-Detects exact FPS):</label>
+    <label>Or use Local Video File (Frame-Accurate & No Error 153):</label>
     <input type="file" id="local-file" accept="video/*" onchange="loadLocalVideo(event)" />
   </div>
 
   <div class="section">
     <h3>2. Sync & Timing Config</h3>
     <div class="row">
-      <div style="flex: 1;">
-        <label>Video FPS</label>
-        <input type="number" id="video-fps" value="60.0" step="0.1" onchange="updateReadout()" />
+      <div style="flex:1;">
+        <label>Video FPS <span id="fps-badge" class="badge">Manual</span></label>
+        <input type="number" id="video-fps" value="60.0" step="0.01" onchange="updateReadout()" />
       </div>
-      <div style="flex: 1;">
+      <div style="flex:1;">
         <label>Target GD TPS</label>
         <input type="number" id="target-tps" value="240.0" step="0.1" onchange="updateReadout()" />
       </div>
     </div>
-    <div id="fps-status" class="fps-badge">✓ Auto-detected: 60.0 FPS</div>
-    
-    <label>Quick FPS Presets:</label>
-    <div class="row" style="margin-bottom: 8px;">
-      <button onclick="setFPS(30)">30 FPS</button>
-      <button onclick="setFPS(60)">60 FPS</button>
-      <button onclick="setFPS(120)">120 FPS</button>
-      <button onclick="runAutoFPS()">Re-Detect</button>
-    </div>
-
+    <button onclick="autoDetectFPS()">Auto-Detect Video FPS</button>
     <label>Start Offset (Video frame matching Level Frame 0):</label>
     <input type="number" id="start-offset" value="0.0" step="0.1" onchange="updateReadout()" />
   </div>
@@ -91,7 +82,7 @@
       </div>
       <div class="readout-box">
         <div class="readout-val" id="disp-gd-frame">0.0</div>
-        <div class="readout-lbl">GD Level Frame</div>
+        <div class="readout-lbl">GD Level Frame (TPS)</div>
       </div>
     </div>
   </div>
@@ -165,18 +156,18 @@
   let isYTReady = false;
   let pendingVideoId = null;
   let localVideo = document.getElementById('video-player');
-  let currentSec = 0.0;
+  let virtualTime = 0.0; // Independent virtual playhead
   let markers = [];
 
   if (window.location.protocol === 'file:') {
     document.getElementById('protocol-warning').style.display = 'block';
   }
 
-  // Smooth Math Gradient: 20 (Clean Blue) -> 0 (Blood Red)
+  // Smooth Math: 20 (Clean Blue) -> 0 (Blood Red)
   function getWindowColor(w) {
     let clamped = Math.max(0.0, Math.min(20.0, parseFloat(w) || 0.0));
     let t = clamped / 20.0;
-    let s = t * t * (3.0 - 2.0 * t); // Smoothstep curve
+    let s = t * t * (3.0 - 2.0 * t); // Smoothstep
 
     let r = Math.round(200.0 * (1.0 - s) + 25.0 * s);
     let g = Math.round(15.0 * (1.0 - s) + 120.0 * (s * s));
@@ -194,83 +185,7 @@
   }
   updateColorPreview();
 
-  // Hardware FPS Auto-Detector via requestVideoFrameCallback
-  function detectVideoFPS(videoElement, onComplete) {
-    if (!('requestVideoFrameCallback' in HTMLVideoElement.prototype)) {
-      return;
-    }
-
-    let deltas = [];
-    let lastTime = null;
-    let samples = 0;
-    let initialTime = videoElement.currentTime;
-    let wasPaused = videoElement.paused;
-
-    function onFrame(now, metadata) {
-      if (lastTime !== null) {
-        let diff = metadata.mediaTime - lastTime;
-        if (diff > 0.003 && diff < 0.15) {
-          deltas.push(diff);
-        }
-      }
-      lastTime = metadata.mediaTime;
-      samples++;
-
-      if (samples < 25) {
-        videoElement.requestVideoFrameCallback(onFrame);
-      } else {
-        if (wasPaused) videoElement.pause();
-        videoElement.currentTime = initialTime;
-
-        if (deltas.length >= 8) {
-          deltas.sort((a, b) => a - b);
-          let medianDelta = deltas[Math.floor(deltas.length / 2)];
-          let rawFPS = 1.0 / medianDelta;
-
-          // Match against standard rates
-          let standards = [23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60, 120, 144, 240];
-          let matched = rawFPS;
-          for (let s of standards) {
-            if (Math.abs(rawFPS - s) < 0.8) {
-              matched = s;
-              break;
-            }
-          }
-          onComplete(matched);
-        }
-      }
-    }
-
-    videoElement.muted = true;
-    let p = videoElement.play();
-    if (p !== undefined) {
-      p.then(() => videoElement.requestVideoFrameCallback(onFrame)).catch(() => {});
-    }
-  }
-
-  function setFPS(fps) {
-    document.getElementById('video-fps').value = fps.toFixed(1);
-    let badge = document.getElementById('fps-status');
-    badge.style.display = 'block';
-    badge.innerText = `Set to: ${fps.toFixed(1)} FPS`;
-    updateReadout();
-  }
-
-  function runAutoFPS() {
-    if (!isYouTube && localVideo) {
-      detectVideoFPS(localVideo, (fps) => {
-        document.getElementById('video-fps').value = fps.toFixed(1);
-        let badge = document.getElementById('fps-status');
-        badge.style.display = 'block';
-        badge.innerText = `✓ Auto-detected: ${fps.toFixed(1)} FPS`;
-        updateReadout();
-      });
-    } else {
-      alert("YouTube API does not report source framerate. Use the 30 / 60 FPS preset buttons.");
-    }
-  }
-
-  // Safe YouTube IFrame API Loader
+  // Load YouTube IFrame API
   const tag = document.createElement('script');
   tag.src = "https://www.youtube.com/iframe_api";
   document.head.appendChild(tag);
@@ -320,7 +235,7 @@
     let raw = document.getElementById('yt-url').value;
     let id = extractYouTubeId(raw);
     if (!id) {
-      alert("Please paste a valid YouTube URL or Video ID!");
+      alert("Please enter a valid YouTube URL or Video ID!");
       return;
     }
 
@@ -350,32 +265,102 @@
     isYouTube = false;
     localVideo.src = URL.createObjectURL(file);
     startSyncLoop();
-
-    // Auto-detect framerate immediately upon loading local file
-    localVideo.onloadeddata = () => {
-      runAutoFPS();
-    };
   }
 
-  function getCurrentTime() {
+  function getPlayerTime() {
     if (isYouTube && ytPlayer && ytPlayer.getCurrentTime) {
       try { return ytPlayer.getCurrentTime() || 0.0; } catch(e) { return 0.0; }
     }
     return localVideo.currentTime || 0.0;
   }
 
-  function seekToSec(sec) {
-    if (isYouTube && ytPlayer && ytPlayer.seekTo) {
-      ytPlayer.seekTo(sec, true);
+  // Auto-Detect FPS
+  function autoDetectFPS() {
+    let badge = document.getElementById('fps-badge');
+    badge.innerText = "Detecting...";
+
+    if (!isYouTube && localVideo && 'requestVideoFrameCallback' in HTMLVideoElement.prototype) {
+      let prevTime = null;
+      let count = 0;
+      let deltas = [];
+
+      function frameCallback(now, metadata) {
+        if (prevTime !== null) {
+          let delta = metadata.mediaTime - prevTime;
+          if (delta > 0.005) deltas.push(delta);
+        }
+        prevTime = metadata.mediaTime;
+        count++;
+        if (count < 10) {
+          localVideo.requestVideoFrameCallback(frameCallback);
+        } else {
+          localVideo.pause();
+          let avgDelta = deltas.reduce((a,b)=>a+b, 0) / deltas.length;
+          let detected = Math.round(1.0 / avgDelta);
+          document.getElementById('video-fps').value = detected.toFixed(2);
+          badge.innerText = `Auto: ${detected} FPS`;
+          updateReadout();
+        }
+      }
+      localVideo.play();
+      localVideo.requestVideoFrameCallback(frameCallback);
     } else {
-      localVideo.currentTime = sec;
+      // YouTube sampling
+      if (!isYouTube || !ytPlayer) {
+        badge.innerText = "60 FPS (Def)";
+        return;
+      }
+      let samples = [];
+      let lastT = getPlayerTime();
+      ytPlayer.playVideo();
+
+      let interval = setInterval(() => {
+        let t = getPlayerTime();
+        let diff = Math.abs(t - lastT);
+        if (diff > 0.008 && diff < 0.08) {
+          samples.push(diff);
+        }
+        lastT = t;
+        if (samples.length >= 8) {
+          clearInterval(interval);
+          ytPlayer.pauseVideo();
+          let avg = samples.reduce((a,b)=>a+b, 0) / samples.length;
+          let fpsEst = 1.0 / avg;
+          let finalFPS = (fpsEst > 45) ? 60.0 : (fpsEst > 26 ? 30.0 : 24.0);
+          document.getElementById('video-fps').value = finalFPS.toFixed(1);
+          badge.innerText = `Auto: ${finalFPS} FPS`;
+          updateReadout();
+        }
+      }, 20);
+    }
+  }
+
+  function seekToSec(sec) {
+    virtualTime = Math.max(0, sec);
+    if (isYouTube && ytPlayer && ytPlayer.seekTo) {
+      ytPlayer.seekTo(virtualTime, true);
+    } else {
+      localVideo.currentTime = virtualTime;
     }
     updateReadout();
   }
 
+  // 1-Frame and N-Frame Stepping with Decoder Flush
   function stepFrame(frames) {
     let fps = parseFloat(document.getElementById('video-fps').value) || 60.0;
-    seekToSec(getCurrentTime() + (frames / fps));
+    virtualTime = Math.max(0, virtualTime + (frames / fps));
+
+    if (isYouTube && ytPlayer) {
+      ytPlayer.seekTo(virtualTime, true);
+      // Decoder pulse: unpause for 25ms to bypass the ~40ms seek ignore threshold
+      if (Math.abs(frames) === 1 && ytPlayer.getPlayerState && ytPlayer.getPlayerState() === 2) {
+        ytPlayer.playVideo();
+        setTimeout(() => ytPlayer.pauseVideo(), 25);
+      }
+    } else {
+      localVideo.currentTime = virtualTime;
+    }
+    updateReadout();
   }
 
   function togglePlay() {
@@ -388,12 +373,12 @@
 
   function startSyncLoop() {
     setInterval(() => {
-      let t = getCurrentTime();
-      if (Math.abs(t - currentSec) > 0.005) {
-        currentSec = t;
+      let isPlaying = (isYouTube && ytPlayer && ytPlayer.getPlayerState && ytPlayer.getPlayerState() === 1) || (!isYouTube && !localVideo.paused);
+      if (isPlaying) {
+        virtualTime = getPlayerTime();
         updateReadout();
       }
-    }, 30);
+    }, 25);
   }
 
   function onScrub(val) {
@@ -406,7 +391,7 @@
     let tps = parseFloat(document.getElementById('target-tps').value) || 240.0;
     let offset = parseFloat(document.getElementById('start-offset').value) || 0.0;
 
-    let videoFrame = currentSec * fps;
+    let videoFrame = virtualTime * fps;
     let gdFrame = Math.max(0, (videoFrame - offset) * (tps / fps));
 
     document.getElementById('disp-video-frame').innerText = videoFrame.toFixed(1);
@@ -414,7 +399,7 @@
 
     let dur = isYouTube && ytPlayer && ytPlayer.getDuration ? ytPlayer.getDuration() : (localVideo.duration || 100);
     if (dur > 0) {
-      document.getElementById('scrubber').value = (currentSec / dur) * 1000.0;
+      document.getElementById('scrubber').value = (virtualTime / dur) * 1000.0;
     }
   }
 
@@ -429,7 +414,7 @@
     let offset = parseFloat(document.getElementById('start-offset').value) || 0.0;
     let winVal = parseFloat(document.getElementById('window-val').value) || 3.0;
 
-    let videoFrame = currentSec * fps;
+    let videoFrame = virtualTime * fps;
     let gdFrame = Math.max(0, (videoFrame - offset) * (tps / fps));
 
     markers.push({
@@ -449,7 +434,7 @@
     let interval = parseFloat(document.getElementById('auto-interval').value) || 15.0;
     let winVal = parseFloat(document.getElementById('auto-window').value) || 4.0;
     let startF = parseFloat(document.getElementById('auto-start').value) || 0.0;
-    let endF = parseFloat(document.getElementById('auto-end').value) || (currentSec * fps);
+    let endF = parseFloat(document.getElementById('auto-end').value) || (virtualTime * fps);
 
     for (let f = startF; f <= endF; f += interval) {
       let gdFrame = Math.max(0, (f - offset) * (tps / fps));
