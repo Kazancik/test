@@ -7,7 +7,7 @@
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #111317; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; display: flex; height: 100vh; overflow: hidden; }
-  #sidebar { width: 440px; background: #181a21; border-right: 1px solid #2b2e3b; padding: 18px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+  #sidebar { width: 450px; background: #181a21; border-right: 1px solid #2b2e3b; padding: 18px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
   #player-container { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #0a0b0e; padding: 20px; }
   h2 { color: #f0c040; font-size: 18px; margin-bottom: 2px; }
   .section { background: #20232c; border-radius: 8px; padding: 12px; border: 1px solid #2f3342; }
@@ -24,6 +24,7 @@
   button.danger { background: #6b2222; border-color: #9c3232; }
   button.danger:hover { background: #852b2b; }
   .notice { background: #2b2210; border: 1px solid #c7951a; color: #f5d061; font-size: 11px; padding: 8px; border-radius: 6px; line-height: 1.4; margin-bottom: 8px; }
+  .fps-badge { font-size: 11px; color: #40e080; font-weight: bold; margin-top: -4px; margin-bottom: 8px; display: none; }
   .readout { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; text-align: center; }
   .readout-box { background: #14161d; padding: 8px; border-radius: 6px; border: 1px solid #2f3342; }
   .readout-val { font-size: 18px; font-weight: bold; color: #f0c040; }
@@ -47,26 +48,36 @@
   <div class="section">
     <h3>1. Video Source</h3>
     <div id="protocol-warning" class="notice" style="display:none;">
-      <b>Note on YouTube Error 153:</b> YouTube blocks embeds when opened via <code>file:///</code>. To play YouTube links, run a local server (e.g. <code>python -m http.server</code>) or use a local video file below.
+      <b>YouTube Error 153 Fix:</b> If opening via <code>file:///</code>, YouTube blocks embeds. Run a local server (e.g. <code>python -m http.server</code>) or select a local video below for instant frame detection without buffering.
     </div>
-    <input type="text" id="yt-url" placeholder="Paste YouTube link, /shorts/, or Video ID..." />
+    <input type="text" id="yt-url" placeholder="Paste YouTube link, /shorts/, or ID..." />
     <button onclick="loadYouTube()">Load YouTube Video</button>
-    <label>Or use Local Video File (Frame-Accurate & No Error 153):</label>
+    <label>Or select local video (Auto-Detects exact FPS):</label>
     <input type="file" id="local-file" accept="video/*" onchange="loadLocalVideo(event)" />
   </div>
 
   <div class="section">
     <h3>2. Sync & Timing Config</h3>
     <div class="row">
-      <div>
+      <div style="flex: 1;">
         <label>Video FPS</label>
         <input type="number" id="video-fps" value="60.0" step="0.1" onchange="updateReadout()" />
       </div>
-      <div>
+      <div style="flex: 1;">
         <label>Target GD TPS</label>
         <input type="number" id="target-tps" value="240.0" step="0.1" onchange="updateReadout()" />
       </div>
     </div>
+    <div id="fps-status" class="fps-badge">✓ Auto-detected: 60.0 FPS</div>
+    
+    <label>Quick FPS Presets:</label>
+    <div class="row" style="margin-bottom: 8px;">
+      <button onclick="setFPS(30)">30 FPS</button>
+      <button onclick="setFPS(60)">60 FPS</button>
+      <button onclick="setFPS(120)">120 FPS</button>
+      <button onclick="runAutoFPS()">Re-Detect</button>
+    </div>
+
     <label>Start Offset (Video frame matching Level Frame 0):</label>
     <input type="number" id="start-offset" value="0.0" step="0.1" onchange="updateReadout()" />
   </div>
@@ -76,11 +87,11 @@
     <div class="readout">
       <div class="readout-box">
         <div class="readout-val" id="disp-video-frame">0.0</div>
-        <div class="readout-lbl">Video Frame (60 FPS)</div>
+        <div class="readout-lbl">Video Frame</div>
       </div>
       <div class="readout-box">
         <div class="readout-val" id="disp-gd-frame">0.0</div>
-        <div class="readout-lbl">GD Frame (Target TPS)</div>
+        <div class="readout-lbl">GD Level Frame</div>
       </div>
     </div>
   </div>
@@ -89,12 +100,12 @@
     <h3>4. Place Marker (20 Blue &rarr; 0 Blood Red)</h3>
     <label>Window Size (Frames):</label>
     <div class="row" style="margin-bottom: 8px;">
-      <button onclick="setWindowVal(1)">1 (Red)</button>
-      <button onclick="setWindowVal(3)">3 (Crimson)</button>
-      <button onclick="setWindowVal(4)">4 (Purple)</button>
-      <button onclick="setWindowVal(10)">10 (Violet)</button>
-      <button onclick="setWindowVal(14)">14 (Slate)</button>
-      <button onclick="setWindowVal(20)">20 (Blue)</button>
+      <button onclick="setWindowVal(1)">1</button>
+      <button onclick="setWindowVal(3)">3</button>
+      <button onclick="setWindowVal(4)">4</button>
+      <button onclick="setWindowVal(10)">10</button>
+      <button onclick="setWindowVal(14)">14</button>
+      <button onclick="setWindowVal(20)">20</button>
     </div>
     <input type="number" id="window-val" value="3.0" step="0.1" oninput="updateColorPreview()" />
     <div id="color-preview" class="color-preview-box">Window: 3.0</div>
@@ -157,12 +168,11 @@
   let currentSec = 0.0;
   let markers = [];
 
-  // Show protocol warning if file:/// is used
   if (window.location.protocol === 'file:') {
     document.getElementById('protocol-warning').style.display = 'block';
   }
 
-  // Smooth Math Function: 20 (Clean Blue) -> 0 (Blood Red)
+  // Smooth Math Gradient: 20 (Clean Blue) -> 0 (Blood Red)
   function getWindowColor(w) {
     let clamped = Math.max(0.0, Math.min(20.0, parseFloat(w) || 0.0));
     let t = clamped / 20.0;
@@ -184,7 +194,83 @@
   }
   updateColorPreview();
 
-  // Load YouTube IFrame API safely
+  // Hardware FPS Auto-Detector via requestVideoFrameCallback
+  function detectVideoFPS(videoElement, onComplete) {
+    if (!('requestVideoFrameCallback' in HTMLVideoElement.prototype)) {
+      return;
+    }
+
+    let deltas = [];
+    let lastTime = null;
+    let samples = 0;
+    let initialTime = videoElement.currentTime;
+    let wasPaused = videoElement.paused;
+
+    function onFrame(now, metadata) {
+      if (lastTime !== null) {
+        let diff = metadata.mediaTime - lastTime;
+        if (diff > 0.003 && diff < 0.15) {
+          deltas.push(diff);
+        }
+      }
+      lastTime = metadata.mediaTime;
+      samples++;
+
+      if (samples < 25) {
+        videoElement.requestVideoFrameCallback(onFrame);
+      } else {
+        if (wasPaused) videoElement.pause();
+        videoElement.currentTime = initialTime;
+
+        if (deltas.length >= 8) {
+          deltas.sort((a, b) => a - b);
+          let medianDelta = deltas[Math.floor(deltas.length / 2)];
+          let rawFPS = 1.0 / medianDelta;
+
+          // Match against standard rates
+          let standards = [23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60, 120, 144, 240];
+          let matched = rawFPS;
+          for (let s of standards) {
+            if (Math.abs(rawFPS - s) < 0.8) {
+              matched = s;
+              break;
+            }
+          }
+          onComplete(matched);
+        }
+      }
+    }
+
+    videoElement.muted = true;
+    let p = videoElement.play();
+    if (p !== undefined) {
+      p.then(() => videoElement.requestVideoFrameCallback(onFrame)).catch(() => {});
+    }
+  }
+
+  function setFPS(fps) {
+    document.getElementById('video-fps').value = fps.toFixed(1);
+    let badge = document.getElementById('fps-status');
+    badge.style.display = 'block';
+    badge.innerText = `Set to: ${fps.toFixed(1)} FPS`;
+    updateReadout();
+  }
+
+  function runAutoFPS() {
+    if (!isYouTube && localVideo) {
+      detectVideoFPS(localVideo, (fps) => {
+        document.getElementById('video-fps').value = fps.toFixed(1);
+        let badge = document.getElementById('fps-status');
+        badge.style.display = 'block';
+        badge.innerText = `✓ Auto-detected: ${fps.toFixed(1)} FPS`;
+        updateReadout();
+      });
+    } else {
+      alert("YouTube API does not report source framerate. Use the 30 / 60 FPS preset buttons.");
+    }
+  }
+
+  // Safe YouTube IFrame API Loader
   const tag = document.createElement('script');
   tag.src = "https://www.youtube.com/iframe_api";
   document.head.appendChild(tag);
@@ -264,6 +350,11 @@
     isYouTube = false;
     localVideo.src = URL.createObjectURL(file);
     startSyncLoop();
+
+    // Auto-detect framerate immediately upon loading local file
+    localVideo.onloadeddata = () => {
+      runAutoFPS();
+    };
   }
 
   function getCurrentTime() {
