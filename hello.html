@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>GD Video Frame Marker Tool</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #111317; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; display: flex; height: 100vh; overflow: hidden; }
+  #sidebar { width: 440px; background: #181a21; border-right: 1px solid #2b2e3b; padding: 18px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+  #player-container { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #0a0b0e; padding: 20px; }
+  h2 { color: #f0c040; font-size: 18px; margin-bottom: 2px; }
+  .section { background: #20232c; border-radius: 8px; padding: 12px; border: 1px solid #2f3342; }
+  .section h3 { font-size: 12px; color: #8a90a4; text-transform: uppercase; margin-bottom: 8px; letter-spacing: 0.5px; }
+  label { font-size: 12px; color: #a0a6b8; display: block; margin-bottom: 4px; }
+  input, select, button { width: 100%; padding: 8px 10px; background: #14161d; border: 1px solid #373b4d; border-radius: 6px; color: #fff; font-size: 13px; margin-bottom: 8px; }
+  input:focus { border-color: #f0c040; outline: none; }
+  .row { display: flex; gap: 8px; }
+  .row input, .row button { margin-bottom: 0; }
+  button { background: #2d3345; border: 1px solid #434c66; cursor: pointer; font-weight: bold; transition: all 0.15s; }
+  button:hover { background: #3b435b; border-color: #f0c040; color: #f0c040; }
+  button.primary { background: #c7951a; border-color: #f0c040; color: #111; }
+  button.primary:hover { background: #e0a920; }
+  button.danger { background: #6b2222; border-color: #9c3232; }
+  button.danger:hover { background: #852b2b; }
+  .notice { background: #2b2210; border: 1px solid #c7951a; color: #f5d061; font-size: 11px; padding: 8px; border-radius: 6px; line-height: 1.4; margin-bottom: 8px; }
+  .readout { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; text-align: center; }
+  .readout-box { background: #14161d; padding: 8px; border-radius: 6px; border: 1px solid #2f3342; }
+  .readout-val { font-size: 18px; font-weight: bold; color: #f0c040; }
+  .readout-lbl { font-size: 11px; color: #7a8094; }
+  #video-wrapper { width: 100%; max-width: 960px; aspect-ratio: 16/9; background: #000; border-radius: 8px; overflow: hidden; position: relative; border: 1px solid #2b2e3b; }
+  video, iframe { width: 100%; height: 100%; border: none; }
+  .timeline-bar { width: 100%; max-width: 960px; margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
+  #scrubber { width: 100%; cursor: pointer; accent-color: #f0c040; }
+  .controls-row { display: flex; justify-content: center; gap: 8px; margin-top: 6px; }
+  .controls-row button { width: auto; padding: 6px 14px; }
+  #marker-list { max-height: 160px; overflow-y: auto; font-size: 12px; }
+  .marker-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; background: #161820; border-radius: 4px; margin-bottom: 4px; border-left: 4px solid #fff; }
+  .color-preview-box { height: 28px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px; text-shadow: 0 1px 2px #000; margin-bottom: 8px; border: 1px solid #373b4d; transition: background-color 0.1s; }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <h2>Frame Marker Tool</h2>
+
+  <div class="section">
+    <h3>1. Video Source</h3>
+    <div id="protocol-warning" class="notice" style="display:none;">
+      <b>Note on YouTube Error 153:</b> YouTube blocks embeds when opened via <code>file:///</code>. To play YouTube links, run a local server (e.g. <code>python -m http.server</code>) or use a local video file below.
+    </div>
+    <input type="text" id="yt-url" placeholder="Paste YouTube link, /shorts/, or Video ID..." />
+    <button onclick="loadYouTube()">Load YouTube Video</button>
+    <label>Or use Local Video File (Frame-Accurate & No Error 153):</label>
+    <input type="file" id="local-file" accept="video/*" onchange="loadLocalVideo(event)" />
+  </div>
+
+  <div class="section">
+    <h3>2. Sync & Timing Config</h3>
+    <div class="row">
+      <div>
+        <label>Video FPS</label>
+        <input type="number" id="video-fps" value="60.0" step="0.1" onchange="updateReadout()" />
+      </div>
+      <div>
+        <label>Target GD TPS</label>
+        <input type="number" id="target-tps" value="240.0" step="0.1" onchange="updateReadout()" />
+      </div>
+    </div>
+    <label>Start Offset (Video frame matching Level Frame 0):</label>
+    <input type="number" id="start-offset" value="0.0" step="0.1" onchange="updateReadout()" />
+  </div>
+
+  <div class="section">
+    <h3>3. Current Frame Readout</h3>
+    <div class="readout">
+      <div class="readout-box">
+        <div class="readout-val" id="disp-video-frame">0.0</div>
+        <div class="readout-lbl">Video Frame (60 FPS)</div>
+      </div>
+      <div class="readout-box">
+        <div class="readout-val" id="disp-gd-frame">0.0</div>
+        <div class="readout-lbl">GD Frame (Target TPS)</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>4. Place Marker (20 Blue &rarr; 0 Blood Red)</h3>
+    <label>Window Size (Frames):</label>
+    <div class="row" style="margin-bottom: 8px;">
+      <button onclick="setWindowVal(1)">1 (Red)</button>
+      <button onclick="setWindowVal(3)">3 (Crimson)</button>
+      <button onclick="setWindowVal(4)">4 (Purple)</button>
+      <button onclick="setWindowVal(10)">10 (Violet)</button>
+      <button onclick="setWindowVal(14)">14 (Slate)</button>
+      <button onclick="setWindowVal(20)">20 (Blue)</button>
+    </div>
+    <input type="number" id="window-val" value="3.0" step="0.1" oninput="updateColorPreview()" />
+    <div id="color-preview" class="color-preview-box">Window: 3.0</div>
+    <button class="primary" onclick="placeMarker()">+ Stamp Marker at Current Frame (M)</button>
+  </div>
+
+  <div class="section">
+    <h3>5. Auto-Marking (Every N Frames)</h3>
+    <div class="row">
+      <div>
+        <label>Every N Frames</label>
+        <input type="number" id="auto-interval" value="15.0" step="0.1" />
+      </div>
+      <div>
+        <label>Window Size</label>
+        <input type="number" id="auto-window" value="4.0" step="0.1" />
+      </div>
+    </div>
+    <div class="row">
+      <input type="number" id="auto-start" placeholder="Start Frame" />
+      <input type="number" id="auto-end" placeholder="End Frame" />
+    </div>
+    <button onclick="runAutoMarker()">Run Auto-Marking</button>
+  </div>
+
+  <div class="section">
+    <h3>6. Placed Markers (<span id="marker-count">0</span>)</h3>
+    <div id="marker-list"></div>
+    <div class="row" style="margin-top: 8px;">
+      <button class="primary" onclick="exportJSON()">Export GD JSON</button>
+      <button class="danger" onclick="clearAll()">Clear All</button>
+    </div>
+  </div>
+</div>
+
+<div id="player-container">
+  <div id="video-wrapper">
+    <video id="video-player" controls style="display:none;"></video>
+    <div id="yt-player"></div>
+  </div>
+
+  <div class="timeline-bar">
+    <input type="range" id="scrubber" min="0" max="1000" value="0" step="0.1" oninput="onScrub(this.value)" />
+    <div class="controls-row">
+      <button onclick="stepFrame(-5)">&lt;&lt; -5 F</button>
+      <button onclick="stepFrame(-1)">&lt; -1 Frame</button>
+      <button onclick="togglePlay()">Play / Pause</button>
+      <button onclick="stepFrame(1)">+1 Frame &gt;</button>
+      <button onclick="stepFrame(5)">+5 F &gt;&gt;</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  let ytPlayer = null;
+  let isYouTube = false;
+  let isYTReady = false;
+  let pendingVideoId = null;
+  let localVideo = document.getElementById('video-player');
+  let currentSec = 0.0;
+  let markers = [];
+
+  // Show protocol warning if file:/// is used
+  if (window.location.protocol === 'file:') {
+    document.getElementById('protocol-warning').style.display = 'block';
+  }
+
+  // Smooth Math Function: 20 (Clean Blue) -> 0 (Blood Red)
+  function getWindowColor(w) {
+    let clamped = Math.max(0.0, Math.min(20.0, parseFloat(w) || 0.0));
+    let t = clamped / 20.0;
+    let s = t * t * (3.0 - 2.0 * t); // Smoothstep curve
+
+    let r = Math.round(200.0 * (1.0 - s) + 25.0 * s);
+    let g = Math.round(15.0 * (1.0 - s) + 120.0 * (s * s));
+    let b = Math.round(25.0 * (1.0 - s) + 255.0 * s);
+
+    return { r, g, b, rgb: `rgb(${r}, ${g}, ${b})` };
+  }
+
+  function updateColorPreview() {
+    let val = parseFloat(document.getElementById('window-val').value) || 0.0;
+    let col = getWindowColor(val);
+    let box = document.getElementById('color-preview');
+    box.style.backgroundColor = col.rgb;
+    box.innerText = `Window: ${val.toFixed(1)} (${col.rgb})`;
+  }
+  updateColorPreview();
+
+  // Load YouTube IFrame API safely
+  const tag = document.createElement('script');
+  tag.src = "https://www.youtube.com/iframe_api";
+  document.head.appendChild(tag);
+
+  window.onYouTubeIframeAPIReady = function() {
+    isYTReady = true;
+    if (pendingVideoId) {
+      initYTPlayer(pendingVideoId);
+      pendingVideoId = null;
+    }
+  };
+
+  function extractYouTubeId(url) {
+    if (!url) return null;
+    let clean = url.trim();
+    if (clean.includes('/shorts/')) return clean.split('/shorts/')[1].split(/[?&]/)[0];
+    if (clean.includes('v=')) return clean.split('v=')[1].split('&')[0];
+    if (clean.includes('youtu.be/')) return clean.split('youtu.be/')[1].split(/[?&]/)[0];
+    return clean;
+  }
+
+  function initYTPlayer(id) {
+    let originParam = (window.location.origin && window.location.origin !== 'null') 
+                      ? window.location.origin 
+                      : 'https://www.youtube.com';
+
+    ytPlayer = new YT.Player('yt-player', {
+      height: '100%',
+      width: '100%',
+      videoId: id,
+      playerVars: {
+        'autoplay': 1,
+        'controls': 1,
+        'rel': 0,
+        'origin': originParam
+      },
+      events: {
+        'onReady': () => {
+          if (id) ytPlayer.loadVideoById(id);
+          startSyncLoop();
+        }
+      }
+    });
+  }
+
+  function loadYouTube() {
+    let raw = document.getElementById('yt-url').value;
+    let id = extractYouTubeId(raw);
+    if (!id) {
+      alert("Please paste a valid YouTube URL or Video ID!");
+      return;
+    }
+
+    localVideo.style.display = 'none';
+    document.getElementById('yt-player').style.display = 'block';
+    isYouTube = true;
+
+    if (!isYTReady || !window.YT || !window.YT.Player) {
+      pendingVideoId = id;
+      return;
+    }
+
+    if (!ytPlayer) {
+      initYTPlayer(id);
+    } else {
+      ytPlayer.loadVideoById(id);
+      startSyncLoop();
+    }
+  }
+
+  function loadLocalVideo(e) {
+    let file = e.target.files[0];
+    if (!file) return;
+
+    document.getElementById('yt-player').style.display = 'none';
+    localVideo.style.display = 'block';
+    isYouTube = false;
+    localVideo.src = URL.createObjectURL(file);
+    startSyncLoop();
+  }
+
+  function getCurrentTime() {
+    if (isYouTube && ytPlayer && ytPlayer.getCurrentTime) {
+      try { return ytPlayer.getCurrentTime() || 0.0; } catch(e) { return 0.0; }
+    }
+    return localVideo.currentTime || 0.0;
+  }
+
+  function seekToSec(sec) {
+    if (isYouTube && ytPlayer && ytPlayer.seekTo) {
+      ytPlayer.seekTo(sec, true);
+    } else {
+      localVideo.currentTime = sec;
+    }
+    updateReadout();
+  }
+
+  function stepFrame(frames) {
+    let fps = parseFloat(document.getElementById('video-fps').value) || 60.0;
+    seekToSec(getCurrentTime() + (frames / fps));
+  }
+
+  function togglePlay() {
+    if (isYouTube && ytPlayer && ytPlayer.getPlayerState) {
+      ytPlayer.getPlayerState() === 1 ? ytPlayer.pauseVideo() : ytPlayer.playVideo();
+    } else {
+      localVideo.paused ? localVideo.play() : localVideo.pause();
+    }
+  }
+
+  function startSyncLoop() {
+    setInterval(() => {
+      let t = getCurrentTime();
+      if (Math.abs(t - currentSec) > 0.005) {
+        currentSec = t;
+        updateReadout();
+      }
+    }, 30);
+  }
+
+  function onScrub(val) {
+    let dur = isYouTube && ytPlayer && ytPlayer.getDuration ? ytPlayer.getDuration() : (localVideo.duration || 100);
+    seekToSec((val / 1000.0) * dur);
+  }
+
+  function updateReadout() {
+    let fps = parseFloat(document.getElementById('video-fps').value) || 60.0;
+    let tps = parseFloat(document.getElementById('target-tps').value) || 240.0;
+    let offset = parseFloat(document.getElementById('start-offset').value) || 0.0;
+
+    let videoFrame = currentSec * fps;
+    let gdFrame = Math.max(0, (videoFrame - offset) * (tps / fps));
+
+    document.getElementById('disp-video-frame').innerText = videoFrame.toFixed(1);
+    document.getElementById('disp-gd-frame').innerText = gdFrame.toFixed(1);
+
+    let dur = isYouTube && ytPlayer && ytPlayer.getDuration ? ytPlayer.getDuration() : (localVideo.duration || 100);
+    if (dur > 0) {
+      document.getElementById('scrubber').value = (currentSec / dur) * 1000.0;
+    }
+  }
+
+  function setWindowVal(val) {
+    document.getElementById('window-val').value = val;
+    updateColorPreview();
+  }
+
+  function placeMarker() {
+    let fps = parseFloat(document.getElementById('video-fps').value) || 60.0;
+    let tps = parseFloat(document.getElementById('target-tps').value) || 240.0;
+    let offset = parseFloat(document.getElementById('start-offset').value) || 0.0;
+    let winVal = parseFloat(document.getElementById('window-val').value) || 3.0;
+
+    let videoFrame = currentSec * fps;
+    let gdFrame = Math.max(0, (videoFrame - offset) * (tps / fps));
+
+    markers.push({
+      videoFrame: parseFloat(videoFrame.toFixed(1)),
+      gdFrame: parseFloat(gdFrame.toFixed(1)),
+      window: winVal
+    });
+
+    markers.sort((a,b) => a.gdFrame - b.gdFrame);
+    renderMarkerList();
+  }
+
+  function runAutoMarker() {
+    let fps = parseFloat(document.getElementById('video-fps').value) || 60.0;
+    let tps = parseFloat(document.getElementById('target-tps').value) || 240.0;
+    let offset = parseFloat(document.getElementById('start-offset').value) || 0.0;
+    let interval = parseFloat(document.getElementById('auto-interval').value) || 15.0;
+    let winVal = parseFloat(document.getElementById('auto-window').value) || 4.0;
+    let startF = parseFloat(document.getElementById('auto-start').value) || 0.0;
+    let endF = parseFloat(document.getElementById('auto-end').value) || (currentSec * fps);
+
+    for (let f = startF; f <= endF; f += interval) {
+      let gdFrame = Math.max(0, (f - offset) * (tps / fps));
+      markers.push({
+        videoFrame: parseFloat(f.toFixed(1)),
+        gdFrame: parseFloat(gdFrame.toFixed(1)),
+        window: winVal
+      });
+    }
+    markers.sort((a,b) => a.gdFrame - b.gdFrame);
+    renderMarkerList();
+  }
+
+  function deleteMarker(idx) {
+    markers.splice(idx, 1);
+    renderMarkerList();
+  }
+
+  function clearAll() {
+    markers = [];
+    renderMarkerList();
+  }
+
+  function renderMarkerList() {
+    let list = document.getElementById('marker-list');
+    list.innerHTML = '';
+    document.getElementById('marker-count').innerText = markers.length;
+
+    markers.forEach((m, idx) => {
+      let col = getWindowColor(m.window);
+      let div = document.createElement('div');
+      div.className = 'marker-item';
+      div.style.borderLeftColor = col.rgb;
+      div.innerHTML = `<span>GD: <b>${m.gdFrame}</b> | Window: <b style="color:${col.rgb}">${m.window}</b></span>
+                       <button style="width:auto;padding:2px 8px;margin:0;" class="danger" onclick="deleteMarker(${idx})">&times;</button>`;
+      list.appendChild(div);
+    });
+  }
+
+  function exportJSON() {
+    let tps = parseFloat(document.getElementById('target-tps').value) || 240.0;
+    let fps = parseFloat(document.getElementById('video-fps').value) || 60.0;
+    let offset = parseFloat(document.getElementById('start-offset').value) || 0.0;
+
+    let data = {
+      version: 2.0,
+      targetTPS: tps,
+      videoFPS: fps,
+      startOffset: offset,
+      markers: markers.map(m => ({ frame: m.gdFrame, window: m.window }))
+    };
+
+    let blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    let a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = "showcase_markers.json";
+    a.click();
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT') return;
+    if (e.key === 'ArrowLeft') stepFrame(e.shiftKey ? -5 : -1);
+    if (e.key === 'ArrowRight') stepFrame(e.shiftKey ? 5 : 1);
+    if (e.key === ' ' || e.key === 'k') { e.preventDefault(); togglePlay(); }
+    if (e.key === 'm' || e.key === 'M') placeMarker();
+  });
+</script>
+</body>
+</html>
